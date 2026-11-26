@@ -4,8 +4,9 @@
 name: arXiv-daily-ai-enhanced
 
 on:
-  schedule:
-    - cron: "30 17 * * *"
+  # 方案一：由本机定时抓取并推送至 data 分支，关闭 GitHub 云端定时触发
+  # schedule:
+  #   - cron: "30 17 * * *"
   workflow_dispatch:
 
 

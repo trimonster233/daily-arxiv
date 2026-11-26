@@ -8,6 +8,7 @@ from queue import Queue
 from threading import Lock
 import dotenv
 import argparse
+import requests
 from tqdm import tqdm
 
 import langchain_core.exceptions
