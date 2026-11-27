@@ -1,8 +1,5 @@
-let currentDate = '';
 let availableDates = [];
 let paperData = {};
-let flatpickrInstance = null;
-let isRangeMode = false;
 let allPapersData = [];
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -53,45 +50,7 @@ async function fetchGitHubStats() {
   }
 }
 
-function toggleDatePicker() {
-  const datePicker = document.getElementById('datePickerModal');
-  datePicker.classList.toggle('active');
-  
-  if (datePicker.classList.contains('active')) {
-    document.body.style.overflow = 'hidden';
-    
-    // 重新初始化日期选择器以确保它反映最新的可用日期
-    if (flatpickrInstance) {
-      flatpickrInstance.setDate(currentDate, false);
-    }
-  } else {
-    document.body.style.overflow = '';
-  }
-}
-
 function initEventListeners() {
-  // 只允许通过日历按钮打开日期选择器
-  const calendarButton = document.getElementById('calendarButton');
-  calendarButton.addEventListener('click', (e) => {
-    e.stopPropagation();
-    toggleDatePicker();
-  });
-  
-  // 点击模态框背景时关闭
-  const datePickerModal = document.querySelector('.date-picker-modal');
-  datePickerModal.addEventListener('click', (event) => {
-    if (event.target === datePickerModal) {
-      toggleDatePicker();
-    }
-  });
-  
-  // 阻止日期选择器内容区域的点击事件冒泡
-  const datePickerContent = document.querySelector('.date-picker-content');
-  datePickerContent.addEventListener('click', (e) => {
-    e.stopPropagation();
-  });
-  
-  document.getElementById('dateRangeMode').addEventListener('change', toggleRangeMode);
   
   // 添加侧边栏关闭按钮事件
   const closeButton = document.querySelector('.close-sidebar');
@@ -147,7 +106,7 @@ async function fetchAvailableDates() {
   try {
     // 从 data 分支获取文件列表
     const fileListUrl = DATA_CONFIG.getDataUrl('assets/file-list.txt');
-    const response = await fetch(fileListUrl);
+    const response = await fetch(fileListUrl, { cache: 'no-cache' });
     if (!response.ok) {
       console.error('Error fetching file list:', response.status);
       return [];
@@ -178,77 +137,11 @@ async function fetchAvailableDates() {
     availableDates = [...new Set(dates)];
     availableDates.sort((a, b) => new Date(b) - new Date(a));
 
-    initDatePicker(); // Assuming this function uses availableDates
+    initDatePicker(availableDates, day => loadPapersByDateRange(day, day), loadPapersByDateRange);
 
     return availableDates;
   } catch (error) {
     console.error('获取可用日期失败:', error);
-  }
-}
-
-function initDatePicker() {
-  const datepickerInput = document.getElementById('datepicker');
-  
-  if (flatpickrInstance) {
-    flatpickrInstance.destroy();
-  }
-  
-  // 创建可用日期的映射，用于禁用无效日期
-  const enabledDatesMap = {};
-  availableDates.forEach(date => {
-    enabledDatesMap[date] = true;
-  });
-  
-  // 配置 Flatpickr
-  flatpickrInstance = flatpickr(datepickerInput, {
-    inline: true,
-    dateFormat: "Y-m-d",
-    defaultDate: availableDates[0],
-    enable: [
-      function(date) {
-        // 只启用有效日期
-        const dateStr = date.getFullYear() + "-" + 
-                        String(date.getMonth() + 1).padStart(2, '0') + "-" + 
-                        String(date.getDate()).padStart(2, '0');
-        return !!enabledDatesMap[dateStr];
-      }
-    ],
-    onChange: function(selectedDates, dateStr) {
-      if (isRangeMode && selectedDates.length === 2) {
-        // 处理日期范围选择
-        const startDate = formatDateForAPI(selectedDates[0]);
-        const endDate = formatDateForAPI(selectedDates[1]);
-        loadPapersByDateRange(startDate, endDate);
-        toggleDatePicker();
-      } else if (!isRangeMode && selectedDates.length === 1) {
-        // 处理单个日期选择
-        const selectedDate = formatDateForAPI(selectedDates[0]);
-        if (availableDates.includes(selectedDate)) {
-          loadPapersByDateRange(selectedDate, selectedDate);
-          toggleDatePicker();
-        }
-      }
-    }
-  });
-  
-  // 隐藏日期输入框
-  const inputElement = document.querySelector('.flatpickr-input');
-  if (inputElement) {
-    inputElement.style.display = 'none';
-  }
-}
-
-function formatDateForAPI(date) {
-  return date.getFullYear() + "-" + 
-         String(date.getMonth() + 1).padStart(2, '0') + "-" + 
-         String(date.getDate()).padStart(2, '0');
-}
-
-function toggleRangeMode() {
-  isRangeMode = document.getElementById('dateRangeMode').checked;
-  
-  if (flatpickrInstance) {
-    flatpickrInstance.set('mode', isRangeMode ? 'range' : 'single');
   }
 }
 
@@ -263,11 +156,10 @@ async function loadPapersByDateRange(startDate, endDate) {
     return;
   }
   
+  const signal = beginPaperRequest();
   if (startDate === endDate) {  
-    currentDate = startDate;
     document.getElementById('currentDate').textContent = formatDate(startDate);
   } else {
-    currentDate = `${startDate} - ${endDate}`;
     document.getElementById('currentDate').textContent = `${formatDate(startDate)} - ${formatDate(endDate)}`;
   }
   
@@ -282,13 +174,14 @@ async function loadPapersByDateRange(startDate, endDate) {
   try {
     // 加载所有日期的论文数据
     const allPaperData = {};
-    allPapersData = []; // 重置全局论文数据
+    const papersInRange = [];
     
     for (const date of validDatesInRange) {
       const selectedLanguage = selectLanguageForDate(date);
       // 从 data 分支获取数据文件
       const dataUrl = DATA_CONFIG.getDataUrl(`data/${date}_AI_enhanced_${selectedLanguage}.jsonl`);
-      const response = await fetch(dataUrl);
+      const response = await fetch(dataUrl, { signal });
+      if (!response.ok) throw new Error(`Failed to load ${date} (HTTP ${response.status})`);
       const text = await response.text();
       const dataPapers = parseJsonlData(text, date);
       
@@ -299,10 +192,11 @@ async function loadPapersByDateRange(startDate, endDate) {
         }
         allPaperData[category] = allPaperData[category].concat(dataPapers[category]);
         // 将论文添加到全局数组
-        allPapersData = allPapersData.concat(dataPapers[category]);
+        papersInRange.push(...dataPapers[category]);
       });
     }
     
+    allPapersData = papersInRange;
     paperData = allPaperData;
 
     // 提取所有论文标题
@@ -704,6 +598,7 @@ async function loadPapersByDateRange(startDate, endDate) {
     }
     
   } catch (error) {
+    if (signal.aborted) return;
     console.error('加载论文数据失败:', error);
     container.innerHTML = `
       <div class="loading-container">
@@ -762,6 +657,7 @@ function parseJsonlData(jsonlText, date) {
 function formatDate(dateString) {
   const date = new Date(dateString);
   return date.toLocaleDateString('en-US', {
+    timeZone: 'UTC',
     year: 'numeric',
     month: 'numeric',
     day: 'numeric'
